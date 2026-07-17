@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -19,14 +20,18 @@ type Randomix interface {
 	RandomCPF() string
 	RandomCNPJ() string
 	RandomUsername() string
-	RandomPassword(int) string
+	RandomPassword(length int) string
 	RandomUUIDv4() uuid.UUID
 	RandomUUIDv7() (uuid.UUID, error)
+	PerlinNoise(x, y float64) float64
 }
 type randomix struct {
 	randomGenerator *rand.Rand
+	perm            []int
+	permOnce        sync.Once
 }
 
+// NewRandomix creates a new Randomix instance seeded from src.
 func NewRandomix(src rand.Source) Randomix {
 	generator := rand.New(src)
 	return &randomix{
@@ -34,6 +39,7 @@ func NewRandomix(src rand.Source) Randomix {
 	}
 }
 
+// RandomIPv4 returns a random IPv4 address.
 func (r *randomix) RandomIPv4() net.IP {
 	return net.IPv4(
 		byte(r.IntN(256)),
@@ -43,6 +49,7 @@ func (r *randomix) RandomIPv4() net.IP {
 	)
 }
 
+// RandomIPv6 returns a random IPv6 address.
 func (r *randomix) RandomIPv6() net.IP {
 	var ip [16]byte
 
@@ -51,6 +58,7 @@ func (r *randomix) RandomIPv6() net.IP {
 	return net.IP(ip[:])
 }
 
+// RandomMAC returns a random MAC address (locally administered, unicast).
 func (r *randomix) RandomMAC() net.HardwareAddr {
 	mac := make([]byte, 6)
 	for i := range mac {
@@ -64,6 +72,7 @@ func (r *randomix) RandomMAC() net.HardwareAddr {
 	return hwAddr
 }
 
+// RandomEmail returns a random email address.
 func (r *randomix) RandomEmail() string {
 	user := randomString(r, 8)
 	domain := randomString(r, 5)
@@ -72,6 +81,7 @@ func (r *randomix) RandomEmail() string {
 	return fmt.Sprintf("%s@%s.%s", user, domain, tld)
 }
 
+// RandomPhoneNumber returns a random Brazilian-style phone number.
 func (r *randomix) RandomPhoneNumber() string {
 	areaCode := r.IntN(90) + 10
 	number := fmt.Sprintf("9%04d-%04d", r.IntN(10000), r.IntN(10000))
@@ -79,6 +89,7 @@ func (r *randomix) RandomPhoneNumber() string {
 	return fmt.Sprintf("(%d) %s", areaCode, number)
 }
 
+// RandomCPF returns a random valid CPF (Brazilian individual taxpayer ID).
 func (r *randomix) RandomCPF() string {
 	digits := make([]int, 9)
 	for i := range digits {
@@ -105,6 +116,7 @@ func (r *randomix) RandomCPF() string {
 	)
 }
 
+// RandomCNPJ returns a random valid CNPJ (Brazilian company ID).
 func (r *randomix) RandomCNPJ() string {
 	base := make([]int, 12)
 	for i := 0; i < 8; i++ {
@@ -142,6 +154,7 @@ func (r *randomix) RandomCNPJ() string {
 	)
 }
 
+// RandomUsername returns a random username like "cool_tiger42".
 func (r *randomix) RandomUsername() string {
 	adjs := []string{"cool", "fast", "lazy", "smart", "funny", "dark", "loud"}
 	nouns := []string{"tiger", "wizard", "robot", "cat", "dog", "pirate", "ninja"}
@@ -153,6 +166,7 @@ func (r *randomix) RandomUsername() string {
 	)
 }
 
+// RandomPassword returns a random password of the given length.
 func (r *randomix) RandomPassword(length int) string {
 	const charset = `abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*`
 	pass := make([]byte, length)
@@ -163,10 +177,12 @@ func (r *randomix) RandomPassword(length int) string {
 	return string(pass)
 }
 
+// RandomUUIDv4 returns a random UUIDv4.
 func (r *randomix) RandomUUIDv4() uuid.UUID {
 	return uuid.New()
 }
 
+// RandomUUIDv7 returns a random UUIDv7 (time-ordered).
 func (r *randomix) RandomUUIDv7() (uuid.UUID, error) {
 	return uuid.NewV7()
 }
