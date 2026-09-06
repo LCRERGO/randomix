@@ -11,7 +11,7 @@ func (r *randomix) readBytes(buf []byte) {
 func randomString(r *randomix, length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	var sb strings.Builder
-	for i := 0; i < length; i++ {
+	for range length {
 		sb.WriteByte(charset[r.IntN(len(charset))])
 	}
 

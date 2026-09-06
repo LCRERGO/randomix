@@ -25,7 +25,7 @@ import "github.com/LCRERGO/randomix"
 
 ## Requirements
 
-- Go 1.24.5+
+- Go 1.27+
 
 ## Usage
 
