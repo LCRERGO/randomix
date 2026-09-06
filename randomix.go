@@ -1,14 +1,55 @@
 package randomix
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
-	"math/rand/v2"
 	"net"
 	"sync"
 
 	"github.com/google/uuid"
 )
 
+// Algorithm identifies which PRNG algorithm powers a Randomix instance.
+type Algorithm uint8
+
+const (
+	// MT19937 is the classic Mersenne Twister (32-bit words, 624-word state).
+	MT19937 Algorithm = iota
+	// LCG is a 64-bit linear congruential generator (Knuth/Multiply-with-state).
+	LCG
+	// SplitMix64 is the SplitMix64 generator.
+	SplitMix64
+	// Xoshiro256 is the xoshiro256** generator.
+	Xoshiro256
+	// PCG64 is the PCG64 (XSL-RR, 128-bit state) generator.
+	PCG64
+	// ChaCha8 is an 8-round ChaCha keystream generator.
+	// NOTE: implemented for variety and determinism, it is NOT cryptographically secure here.
+	ChaCha8
+)
+
+// Option configures a Randomix instance at construction time.
+type Option func(*config)
+
+type config struct {
+	algorithm Algorithm
+	seed      uint64
+	seeded    bool
+}
+
+// WithAlgorithm selects the PRNG algorithm backing the instance. Defaults to MT19937.
+func WithAlgorithm(a Algorithm) Option {
+	return func(c *config) { c.algorithm = a }
+}
+
+// WithSeed makes the instance deterministic: the same seed always produces
+// the same sequence. When omitted, a seed is drawn from crypto/rand.
+func WithSeed(seed uint64) Option {
+	return func(c *config) { c.seed = seed; c.seeded = true }
+}
+
+// Randomix generates random data of many common shapes.
 type Randomix interface {
 	baseRandom
 
@@ -23,19 +64,52 @@ type Randomix interface {
 	RandomPassword(length int) string
 	RandomUUIDv4() uuid.UUID
 	RandomUUIDv7() (uuid.UUID, error)
+	Noise(opts ...NoiseOption) Noise
 	PerlinNoise(x, y float64) float64
 }
+
 type randomix struct {
-	randomGenerator *rand.Rand
-	perm            []int
-	permOnce        sync.Once
+	randomGenerator baseRandom
+	noiseOnce       sync.Once
+	noise           Noise
 }
 
-// NewRandomix creates a new Randomix instance seeded from src.
-func NewRandomix(src rand.Source) Randomix {
-	generator := rand.New(src)
-	return &randomix{
-		randomGenerator: generator,
+// NewRandomix creates a Randomix instance. Pass WithAlgorithm and/or WithSeed
+// to choose the PRNG and make it deterministic. Default: MT19937, crypto-seeded.
+func NewRandomix(opts ...Option) Randomix {
+	cfg := config{algorithm: MT19937}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	seed := cfg.seed
+	if !cfg.seeded {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			panic("randomix: failed to read crypto seed: " + err.Error())
+		}
+		seed = binary.LittleEndian.Uint64(b[:])
+	}
+
+	return &randomix{randomGenerator: newGenerator(cfg.algorithm, seed)}
+}
+
+func newGenerator(a Algorithm, seed uint64) baseRandom {
+	switch a {
+	case LCG:
+		return newLCG(seed)
+	case SplitMix64:
+		return newSplitMix64(seed)
+	case Xoshiro256:
+		return newXoshiro256(seed)
+	case PCG64:
+		return newPCG64(seed)
+	case ChaCha8:
+		return newChaCha8(seed)
+	case MT19937:
+		return newMT19937(seed)
+	default:
+		panic("randomix: unknown algorithm")
 	}
 }
 
@@ -166,15 +240,37 @@ func (r *randomix) RandomUsername() string {
 	)
 }
 
-// RandomPassword returns a random password of the given length.
+const passwordCharset = `abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*`
+
+// RandomPassword returns a cryptographically random password of the given
+// length. It deliberately does NOT use the configured PRNG: Mersenne Twister
+// and LCG-class generators are predictable and must never back secrets.
 func (r *randomix) RandomPassword(length int) string {
-	const charset = `abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*`
-	pass := make([]byte, length)
-	for i := range pass {
-		pass[i] = charset[r.IntN(len(charset))]
+	if length < 0 {
+		panic("randomix: invalid argument to RandomPassword")
+	}
+	if length == 0 {
+		return ""
 	}
 
-	return string(pass)
+	// Rejection sampling so every charset byte is equally likely.
+	limit := byte(256 - (256 % len(passwordCharset)))
+	out := make([]byte, length)
+	var buf [1]byte
+
+	for i := range out {
+		for {
+			if _, err := rand.Read(buf[:]); err != nil {
+				panic("randomix: crypto/rand failure: " + err.Error())
+			}
+			if buf[0] < limit {
+				out[i] = passwordCharset[int(buf[0])%len(passwordCharset)]
+				break
+			}
+		}
+	}
+
+	return string(out)
 }
 
 // RandomUUIDv4 returns a random UUIDv4.
